@@ -1,269 +1,80 @@
-// server/server.js
-import 'dotenv/config';
-import express from 'express';
-import http from 'http';
-import { Server } from 'socket.io';
-import cors from 'cors';
-import mongoose from 'mongoose';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import rateLimit from 'express-rate-limit';
+import express from "express";
+import http from "http";
+import { Server } from "socket.io";
+import mongoose from "mongoose";
+import cors from "cors";
+import dotenv from "dotenv";
+import jwt from "jsonwebtoken";
 
-/* ============================ ENV ============================
-   .env example (what you showed):
-   PORT=5000
-   MONGODB_URI=your-atlas-uri
-   CLIENT_ORIGIN=http://localhost:3000
-   JWT_SECRET=replace-with-a-long-random-string
+dotenv.config();
 
-   Tip: You can allow multiple origins by making CLIENT_ORIGIN comma-separated:
-   CLIENT_ORIGIN=http://localhost:3000,https://your-frontend.vercel.app
-================================================================ */
 const {
   PORT = 5000,
   MONGODB_URI,
-  CLIENT_ORIGIN = 'http://localhost:3000',
-  JWT_SECRET
+  CLIENT_ORIGIN,
+  JWT_SECRET = "change_me"
 } = process.env;
 
-if (!MONGODB_URI) throw new Error('MONGODB_URI is required');
-if (!JWT_SECRET) throw new Error('JWT_SECRET is required');
-
-const allowedOrigins = (CLIENT_ORIGIN || '')
-  .split(',')
-  .map(s => s.trim())
-  .filter(Boolean);
-
-/* ============================= DB ============================ */
-mongoose.set('strictQuery', true);
-await mongoose.connect(MONGODB_URI, { maxPoolSize: 10 });
-console.log('✅ MongoDB connected');
-
-/* =========================== MODELS ========================== */
-const { Schema, model } = mongoose;
-
-const userSchema = new Schema(
-  {
-    username: { type: String, unique: true, required: true, trim: true, minlength: 3, maxlength: 24 },
-    email:    { type: String, unique: true, sparse: true, trim: true },
-    password: { type: String, required: true } // bcrypt hash
-  },
-  { timestamps: true }
-);
-const User = model('User', userSchema);
-
-const messageSchema = new Schema(
-  {
-    room: { type: String, index: true, required: true },
-    username: { type: String, required: true }, // denormalized for fast reads
-    text: { type: String, required: true }
-  },
-  { timestamps: { createdAt: true, updatedAt: false } }
-);
-messageSchema.index({ room: 1, createdAt: -1 });
-const Message = model('Message', messageSchema);
-
-/* ========================= AUTH HELPERS ====================== */
-const signToken = (payload, expiresIn = '7d') =>
-  jwt.sign(payload, JWT_SECRET, { expiresIn });
-
-const verifyToken = (token) => jwt.verify(token, JWT_SECRET);
-
-function requireAuth(req, res, next) {
-  const auth = req.headers.authorization || '';
-  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
-  if (!token) return res.status(401).json({ error: 'Missing token' });
-  try {
-    req.user = verifyToken(token); // { id, username }
-    next();
-  } catch {
-    res.status(401).json({ error: 'Invalid token' });
-  }
-}
-
-/* ============================ APP ============================ */
 const app = express();
 const server = http.createServer(app);
 
-/* -------------- CORS (multi-origin + preflight) -------------- */
-const corsOptions = {
-  origin(origin, cb) {
-    if (!origin) return cb(null, true);                 // allow curl/postman
-    if (allowedOrigins.includes(origin)) return cb(null, true);
-    return cb(new Error('Not allowed by CORS: ' + origin));
-  },
-  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
-  allowedHeaders: ['Content-Type','Authorization'],
+// ✅ Step 1: TEMPORARY permissive CORS (allow all origins, will lock later)
+app.use(cors({
+  origin: true,
   credentials: true,
-  optionsSuccessStatus: 204
-};
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
+  methods: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
+  allowedHeaders: ["Content-Type","Authorization"]
+}));
+app.options("*", cors({
+  origin: true,
+  credentials: true,
+  methods: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
+  allowedHeaders: ["Content-Type","Authorization"]
+}));
 
 app.use(express.json());
 
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });
+// ✅ Step 2: Connect to MongoDB Atlas
+mongoose.connect(MONGODB_URI, { maxPoolSize: 10 })
+  .then(() => console.log("✅ MongoDB connected"))
+  .catch(err => console.error("❌ MongoDB error:", err));
 
-/* ============================ ROUTES ========================= */
-app.get('/health', (_req, res) => res.json({ ok: true }));
-
-// Full auth (optional)
-app.post('/auth/register', authLimiter, async (req, res) => {
-  try {
-    const { username, password, email } = req.body || {};
-    if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
-    if (username.length < 3) return res.status(400).json({ error: 'Username too short' });
-    if (password.length < 6) return res.status(400).json({ error: 'Password too short' });
-
-    const exists = await User.findOne({ username });
-    if (exists) return res.status(409).json({ error: 'Username already taken' });
-
-    const hash = await bcrypt.hash(password, 10);
-    const user = await User.create({ username, email, password: hash });
-
-    const token = signToken({ id: user._id, username: user.username });
-    res.json({ token, user: { id: user._id, username: user.username, email: user.email } });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'Registration failed' });
-  }
-});
-
-app.post('/auth/login', authLimiter, async (req, res) => {
-  try {
-    const { username, password } = req.body || {};
-    if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
-
-    const user = await User.findOne({ username });
-    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
-
-    const ok = await bcrypt.compare(password, user.password);
-    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
-
-    const token = signToken({ id: user._id, username: user.username });
-    res.json({ token, user: { id: user._id, username: user.username, email: user.email } });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'Login failed' });
-  }
-});
-
-// Guest token for quick demo (no DB user created)
-app.post('/auth/guest', async (req, res) => {
-  try {
-    const { username } = req.body || {};
-    if (!username || username.length < 3) {
-      return res.status(400).json({ error: 'username required' });
-    }
-    const token = signToken({ id: `guest:${username}`, username }, '7d');
-    res.json({ token, user: { id: `guest:${username}`, username } });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'guest failed' });
-  }
-});
-
-// Protected REST history (client must send Bearer token)
-app.get('/rooms/:room/messages', requireAuth, async (req, res) => {
-  const { room } = req.params;
-  const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
-  const docs = await Message.find({ room }).sort({ createdAt: -1 }).limit(limit).lean();
-  res.json(docs.reverse());
-});
-
-/* ========================= SOCKET.IO ========================= */
+// ✅ Step 3: Socket.io setup
 const io = new Server(server, {
-  cors: { origin: allowedOrigins, methods: ['GET','POST'], credentials: true }
+  cors: { origin: true, credentials: true, methods: ["GET","POST"] }
 });
 
-// Verify JWT on handshake
-io.use((socket, next) => {
-  const token = socket.handshake.auth?.token;
-  if (!token) return next(new Error('Missing auth token'));
-  try {
-    socket.data.user = verifyToken(token); // { id, username }
-    next();
-  } catch {
-    next(new Error('Invalid auth token'));
-  }
-});
+io.on("connection", (socket) => {
+  console.log("⚡ New client connected:", socket.id);
 
-// Track users per room
-const roomUsers = new Map(); // room -> Set(usernames)
-const getOnline = (room) => Array.from(roomUsers.get(room) || []);
-
-io.on('connection', (socket) => {
-  console.log('🔌 socket connected:', socket.id, 'user:', socket.data.user?.username);
-
-  socket.on('joinRoom', async ({ room }) => {
-    const username = socket.data.user?.username;
-    if (!room || !username) return;
-
-    // leave previous room if any
-    if (socket.data.room) {
-      const prev = socket.data.room;
-      socket.leave(prev);
-      const set = roomUsers.get(prev);
-      if (set) {
-        set.delete(username);
-        if (set.size === 0) roomUsers.delete(prev);
-      }
-      io.to(prev).emit('onlineUsers', getOnline(prev));
-    }
-
-    // join new room
-    socket.data.room = room;
+  socket.on("joinRoom", ({ room }) => {
     socket.join(room);
-    if (!roomUsers.has(room)) roomUsers.set(room, new Set());
-    roomUsers.get(room).add(username);
-    io.to(room).emit('onlineUsers', getOnline(room));
-
-    // send last 50 messages only to the joining user
-    const history = await Message.find({ room }).sort({ createdAt: -1 }).limit(50).lean();
-    socket.emit('chatHistory', history.reverse());
+    console.log(`📌 ${socket.id} joined room ${room}`);
   });
 
-  socket.on('chatMessage', async ({ text }) => {
-    const username = socket.data.user?.username;
-    const room = socket.data.room;
-    if (!username || !room) return;
-    const trimmed = (text || '').trim();
-    if (!trimmed || trimmed.length > 1000) return;
-
-    const doc = await Message.create({ room, username, text: trimmed });
-    io.to(room).emit('chatMessage', {
-      _id: doc._id,
-      room: doc.room,
-      username: doc.username,
-      text: doc.text,
-      createdAt: doc.createdAt
-    });
+  socket.on("chatMessage", (msg) => {
+    io.to(msg.room).emit("chatMessage", msg);
   });
 
-  socket.on('typing', ({ isTyping }) => {
-    const username = socket.data.user?.username;
-    const room = socket.data.room;
-    if (!username || !room) return;
-    socket.to(room).emit('typing', { username, isTyping: !!isTyping });
-  });
-
-  socket.on('disconnect', () => {
-    const username = socket.data.user?.username;
-    const room = socket.data.room;
-    if (room && username) {
-      const set = roomUsers.get(room);
-      if (set) {
-        set.delete(username);
-        if (set.size === 0) roomUsers.delete(room);
-      }
-      io.to(room).emit('onlineUsers', getOnline(room));
-    }
-    console.log('❌ socket disconnected:', socket.id);
+  socket.on("disconnect", () => {
+    console.log("❌ Client disconnected:", socket.id);
   });
 });
 
-/* ============================ START =========================== */
-server.listen(process.env.PORT || PORT, () => {
-  console.log(`🚀 Server listening on :${process.env.PORT || PORT}`);
-  console.log('Allowed CORS origins:', allowedOrigins);
+// ✅ Step 4: Simple Guest Auth route
+app.post("/auth/guest", (req, res) => {
+  const username = req.body.username || `Guest_${Math.floor(Math.random()*1000)}`;
+  const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: "1h" });
+
+  res.json({ token, user: { username } });
+});
+
+// ✅ Step 5: Test route
+app.get("/", (req, res) => {
+  res.send("✅ Realtime Chat Server running!");
+});
+
+// ✅ Step 6: Start server
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
