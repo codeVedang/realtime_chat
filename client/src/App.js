@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { socket, connectWithToken } from "./socket";
 import ChatRoom from "./components/ChatRoom";
-import "./styles.css"; // make sure this is imported
+import "./App.css"; // make sure this is imported
 
 const BASE = process.env.REACT_APP_SERVER_URL || "http://localhost:5000";
 
