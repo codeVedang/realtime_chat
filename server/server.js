@@ -9,23 +9,37 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import rateLimit from 'express-rate-limit';
 
-/* ------------------------- ENV ------------------------- */
+/* ============================ ENV ============================
+   .env example (what you showed):
+   PORT=5000
+   MONGODB_URI=your-atlas-uri
+   CLIENT_ORIGIN=http://localhost:3000
+   JWT_SECRET=replace-with-a-long-random-string
+
+   Tip: You can allow multiple origins by making CLIENT_ORIGIN comma-separated:
+   CLIENT_ORIGIN=http://localhost:3000,https://your-frontend.vercel.app
+================================================================ */
 const {
   PORT = 5000,
-  MONGODB_URI = 'mongodb://127.0.0.1:27017/realtime_chat',
-  // Comma-separated origins, e.g. "http://localhost:3000,https://your-netlify.app"
+  MONGODB_URI,
   CLIENT_ORIGIN = 'http://localhost:3000',
-  JWT_SECRET = 'change_me'
+  JWT_SECRET
 } = process.env;
 
-const allowedOrigins = CLIENT_ORIGIN.split(',').map(s => s.trim()).filter(Boolean);
+if (!MONGODB_URI) throw new Error('MONGODB_URI is required');
+if (!JWT_SECRET) throw new Error('JWT_SECRET is required');
 
-/* ------------------------- DB -------------------------- */
+const allowedOrigins = (CLIENT_ORIGIN || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+/* ============================= DB ============================ */
 mongoose.set('strictQuery', true);
 await mongoose.connect(MONGODB_URI, { maxPoolSize: 10 });
 console.log('✅ MongoDB connected');
 
-/* ----------------------- MODELS ------------------------ */
+/* =========================== MODELS ========================== */
 const { Schema, model } = mongoose;
 
 const userSchema = new Schema(
@@ -41,7 +55,7 @@ const User = model('User', userSchema);
 const messageSchema = new Schema(
   {
     room: { type: String, index: true, required: true },
-    username: { type: String, required: true }, // denormalized username
+    username: { type: String, required: true }, // denormalized for fast reads
     text: { type: String, required: true }
   },
   { timestamps: { createdAt: true, updatedAt: false } }
@@ -49,66 +63,51 @@ const messageSchema = new Schema(
 messageSchema.index({ room: 1, createdAt: -1 });
 const Message = model('Message', messageSchema);
 
-/* -------------------- AUTH HELPERS --------------------- */
-function signToken(payload, expiresIn = '7d') {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn });
-}
-function verifyToken(token) {
-  return jwt.verify(token, JWT_SECRET);
-}
+/* ========================= AUTH HELPERS ====================== */
+const signToken = (payload, expiresIn = '7d') =>
+  jwt.sign(payload, JWT_SECRET, { expiresIn });
+
+const verifyToken = (token) => jwt.verify(token, JWT_SECRET);
+
 function requireAuth(req, res, next) {
   const auth = req.headers.authorization || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'Missing token' });
   try {
     req.user = verifyToken(token); // { id, username }
-    return next();
+    next();
   } catch {
-    return res.status(401).json({ error: 'Invalid token' });
+    res.status(401).json({ error: 'Invalid token' });
   }
 }
 
-/* ---------------------- APP SETUP ---------------------- */
+/* ============================ APP ============================ */
 const app = express();
 const server = http.createServer(app);
 
-// CORS: allow multiple origins (localhost + deployed client)
-app.use(
-  cors({
-    origin(origin, cb) {
-      if (!origin) return cb(null, true);              // allow curl/postman
-      if (allowedOrigins.includes(origin)) return cb(null, true);
-      return cb(new Error('CORS blocked for ' + origin));
-    },
-    credentials: true
-  })
-);
+/* -------------- CORS (multi-origin + preflight) -------------- */
+const corsOptions = {
+  origin(origin, cb) {
+    if (!origin) return cb(null, true);                 // allow curl/postman
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error('Not allowed by CORS: ' + origin));
+  },
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization'],
+  credentials: true,
+  optionsSuccessStatus: 204
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+
 app.use(express.json());
 
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });
 
-/* ----------------------- ROUTES ------------------------ */
+/* ============================ ROUTES ========================= */
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
-// QUICK DEMO: guest token endpoint (not for production)
-app.post('/auth/guest', async (req, res) => {
-  try {
-    const { username } = req.body || {};
-    if (!username || username.length < 3) {
-      return res.status(400).json({ error: 'username required' });
-    }
-    const token = jwt.sign(
-      { id: `guest:${username}`, username },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-    res.json({ token, user: { id: `guest:${username}`, username } });
-  } catch (e) {
-    res.status(500).json({ error: 'guest failed' });
-  }
-});
-
-
+// Full auth (optional)
 app.post('/auth/register', authLimiter, async (req, res) => {
   try {
     const { username, password, email } = req.body || {};
@@ -149,11 +148,22 @@ app.post('/auth/login', authLimiter, async (req, res) => {
   }
 });
 
-app.get('/auth/me', requireAuth, (req, res) => {
-  res.json({ user: req.user });
+// Guest token for quick demo (no DB user created)
+app.post('/auth/guest', async (req, res) => {
+  try {
+    const { username } = req.body || {};
+    if (!username || username.length < 3) {
+      return res.status(400).json({ error: 'username required' });
+    }
+    const token = signToken({ id: `guest:${username}`, username }, '7d');
+    res.json({ token, user: { id: `guest:${username}`, username } });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'guest failed' });
+  }
 });
 
-// Protected REST history (optional; socket also sends history)
+// Protected REST history (client must send Bearer token)
 app.get('/rooms/:room/messages', requireAuth, async (req, res) => {
   const { room } = req.params;
   const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
@@ -161,27 +171,24 @@ app.get('/rooms/:room/messages', requireAuth, async (req, res) => {
   res.json(docs.reverse());
 });
 
-/* --------------------- SOCKET.IO SETUP ----------------- */
+/* ========================= SOCKET.IO ========================= */
 const io = new Server(server, {
-  cors: {
-    origin: allowedOrigins
-  }
+  cors: { origin: allowedOrigins, methods: ['GET','POST'], credentials: true }
 });
 
-// Verify JWT on socket handshake
+// Verify JWT on handshake
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
   if (!token) return next(new Error('Missing auth token'));
   try {
-    const user = verifyToken(token); // { id, username }
-    socket.data.user = user;
-    return next();
+    socket.data.user = verifyToken(token); // { id, username }
+    next();
   } catch {
-    return next(new Error('Invalid auth token'));
+    next(new Error('Invalid auth token'));
   }
 });
 
-// Track online users by room
+// Track users per room
 const roomUsers = new Map(); // room -> Set(usernames)
 const getOnline = (room) => Array.from(roomUsers.get(room) || []);
 
@@ -192,7 +199,7 @@ io.on('connection', (socket) => {
     const username = socket.data.user?.username;
     if (!room || !username) return;
 
-    // Leave previous
+    // leave previous room if any
     if (socket.data.room) {
       const prev = socket.data.room;
       socket.leave(prev);
@@ -204,14 +211,14 @@ io.on('connection', (socket) => {
       io.to(prev).emit('onlineUsers', getOnline(prev));
     }
 
-    // Join new
+    // join new room
     socket.data.room = room;
     socket.join(room);
     if (!roomUsers.has(room)) roomUsers.set(room, new Set());
     roomUsers.get(room).add(username);
     io.to(room).emit('onlineUsers', getOnline(room));
 
-    // Send last 50 to joining user
+    // send last 50 messages only to the joining user
     const history = await Message.find({ room }).sort({ createdAt: -1 }).limit(50).lean();
     socket.emit('chatHistory', history.reverse());
   });
@@ -255,7 +262,8 @@ io.on('connection', (socket) => {
   });
 });
 
-/* ----------------------- START ------------------------ */
-server.listen(PORT, () => {
-  console.log(`🚀 Server listening on :${PORT}`);
+/* ============================ START =========================== */
+server.listen(process.env.PORT || PORT, () => {
+  console.log(`🚀 Server listening on :${process.env.PORT || PORT}`);
+  console.log('Allowed CORS origins:', allowedOrigins);
 });
