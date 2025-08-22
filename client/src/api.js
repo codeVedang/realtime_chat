@@ -1,12 +1,15 @@
 const BASE = process.env.REACT_APP_SERVER_URL || 'http://localhost:5000';
+console.log('SERVER URL fetch ->', BASE); // <-- TEMP debug line
 
+// api.js
 export async function fetchHistory(room, limit = 50, token) {
   const res = await fetch(`${BASE}/rooms/${encodeURIComponent(room)}/messages?limit=${limit}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {}
+    headers: { Authorization: `Bearer ${token}` }
   });
   if (!res.ok) throw new Error('Failed to fetch history');
   return res.json();
 }
+
 
 export async function registerUser(username, password, email) {
   const res = await fetch(`${BASE}/auth/register`, {

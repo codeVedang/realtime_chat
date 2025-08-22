@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { socket } from '../socket';
-import { fetchHistory } from '../api';
 import MessageList from './MessageList';
 import MessageInput from './MessageInput';
 import OnlineUsersList from './OnlineUsersList';
@@ -8,21 +7,24 @@ import TypingIndicator from './TypingIndicator';
 
 const rooms = ['general', 'random', 'tech', 'music'];
 
-export default function ChatRoom({ username, room, onSwitchRoom }) {
+export default function ChatRoom({ username, room, token: _token, onSwitchRoom }) {
   const [messages, setMessages] = useState([]);
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [typingUsers, setTypingUsers] = useState(new Set());
 
-  // Socket event listeners
+  // Socket listeners: history, live messages, online, typing
   useEffect(() => {
     function onChatHistory(history) {
-      setMessages(history);
+      // Replace with clean history sent by server
+      setMessages(Array.isArray(history) ? history : []);
     }
     function onChatMessage(msg) {
+      // Ignore malformed messages
+      if (!msg || !msg.text || !msg.username) return;
       setMessages(prev => [...prev, msg]);
     }
     function onOnlineUsers(list) {
-      setOnlineUsers(list);
+      setOnlineUsers(Array.isArray(list) ? list : []);
     }
     function onTyping({ username: u, isTyping }) {
       setTypingUsers(prev => {
@@ -45,10 +47,8 @@ export default function ChatRoom({ username, room, onSwitchRoom }) {
     };
   }, []);
 
-  // Backup: fetch history via REST when room changes
-  useEffect(() => {
-    fetchHistory(room).then(setMessages).catch(() => {});
-  }, [room]);
+  // NOTE: We removed REST fetchHistory to avoid duplicates/blank bubbles.
+  // Server already emits 'chatHistory' right after joinRoom.
 
   const typingText = useMemo(() => {
     const arr = Array.from(typingUsers).filter(u => u !== username);
