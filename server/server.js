@@ -90,6 +90,25 @@ const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });
 /* ----------------------- ROUTES ------------------------ */
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
+// QUICK DEMO: guest token endpoint (not for production)
+app.post('/auth/guest', async (req, res) => {
+  try {
+    const { username } = req.body || {};
+    if (!username || username.length < 3) {
+      return res.status(400).json({ error: 'username required' });
+    }
+    const token = jwt.sign(
+      { id: `guest:${username}`, username },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    res.json({ token, user: { id: `guest:${username}`, username } });
+  } catch (e) {
+    res.status(500).json({ error: 'guest failed' });
+  }
+});
+
+
 app.post('/auth/register', authLimiter, async (req, res) => {
   try {
     const { username, password, email } = req.body || {};
