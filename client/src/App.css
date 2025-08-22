@@ -22,17 +22,51 @@ html, body, #root {
 }
 
 /* Nice scrollbars */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: #2a3142 transparent;
-}
-*::-webkit-scrollbar { height: 8px; width: 8px; }
+* { scrollbar-width: thin; scrollbar-color: #2a3142 transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
 *::-webkit-scrollbar-thumb { background: #2a3142; border-radius: 999px; }
+
+/* Small helper text */
+.small { color: var(--muted); font-size: 13px; }
+
+/* Reusable inputs/buttons/rows (used by JoinForm, LoginForm, MessageInput) */
+.row { display: flex; gap: 8px; align-items: center; }
+.input, .select, input[type="text"], input[type="password"], select {
+  width: 100%;
+  height: 42px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #0b0d12;
+  color: var(--text);
+  padding: 0 12px;
+  outline: none;
+}
+.input:focus, select:focus,
+input[type="text"]:focus, input[type="password"]:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(79,70,229,.25);
+}
+
+.btn {
+  height: 42px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #0d1117;
+  color: var(--text);
+  padding: 0 14px;
+  cursor: pointer;
+}
+.btn.primary {
+  background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 100%);
+  border: none;
+  font-weight: 600;
+  color: #fff;
+}
+.btn:disabled { opacity: .7; cursor: not-allowed; }
 
 /* =========================
    AUTH (Login/Register)
 ========================= */
-
 .auth-wrapper {
   min-height: 100vh;
   display: grid;
@@ -54,60 +88,9 @@ html, body, #root {
   box-shadow: 0 20px 60px rgba(0,0,0,.35);
 }
 
-.auth-header h1 {
-  margin: 0 0 6px 0;
-  font-size: 24px;
-  font-weight: 700;
-}
-
-.auth-header .muted {
-  color: var(--muted);
-  font-size: 14px;
-  margin: 0 0 18px 0;
-}
-
+.auth-header h1 { margin: 0 0 6px 0; font-size: 24px; font-weight: 700; }
+.auth-header .muted { color: var(--muted); font-size: 14px; margin: 0 0 18px 0; }
 .auth-form { display: grid; gap: 14px; }
-
-.form-field { display: grid; gap: 6px; }
-
-.form-field label { font-size: 13px; color: var(--muted); }
-
-.auth-input {
-  height: 42px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: #0b0d12;
-  color: var(--text);
-  padding: 0 12px;
-  outline: none;
-}
-
-.auth-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(79,70,229,.25);
-}
-
-.auth-btn {
-  height: 44px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: #0d1117;
-  color: var(--text);
-  cursor: pointer;
-}
-
-.auth-btn.primary {
-  background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 100%);
-  border: none;
-  font-weight: 600;
-}
-
-.auth-btn.ghost {
-  background: transparent;
-  color: var(--muted);
-}
-
-.auth-btn:disabled { opacity: .7; cursor: not-allowed; }
 
 .auth-error {
   color: var(--error);
@@ -119,10 +102,11 @@ html, body, #root {
 }
 
 /* =========================
-   CHAT (matches your classes)
+   CHAT LAYOUT
+   (Matches your current classes)
 ========================= */
 
-/* App container that wraps <ChatRoom /> in App.js */
+/* App container that wraps <ChatRoom /> */
 .app {
   display: grid;
   grid-template-columns: 260px 1fr;
@@ -130,26 +114,17 @@ html, body, #root {
   background: var(--bg);
 }
 
-/* ---- Sidebar ---- */
+/* ---- Sidebar (also reused by JoinForm/LoginForm containers) ---- */
 .sidebar {
   background: var(--card);
   border-right: 1px solid var(--border);
   padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
 }
-
-.sidebar h3 {
-  margin: 0;
-  font-size: 16px;
-  color: var(--text);
-}
-
-.rooms {
-  display: grid;
-  gap: 10px;
-}
+.sidebar h2, .sidebar h3 { margin: 0; font-size: 16px; }
+.rooms { display: grid; gap: 10px; }
 
 .room-btn {
   height: 36px;
@@ -161,9 +136,7 @@ html, body, #root {
   padding: 0 12px;
   cursor: pointer;
 }
-
-.room-btn:hover,
-.room-btn.active {
+.room-btn:hover, .room-btn.active {
   color: var(--text);
   border-color: #2b3344;
   background: #161a22;
@@ -186,11 +159,9 @@ html, body, #root {
   border-bottom: 1px solid var(--border);
   background: #0e1014;
 }
-
 .room-title { font-weight: 700; }
-.small { color: var(--muted); font-size: 13px; }
 
-/* Messages list (MessageList.js renders into .messages) */
+/* Messages list */
 .messages {
   padding: 16px;
   overflow-y: auto;
@@ -199,7 +170,7 @@ html, body, #root {
   gap: 12px;
 }
 
-/* Individual message bubble (MessageList uses .msg and .me) */
+/* Message bubble (MessageList uses .msg and .me) */
 .msg {
   max-width: 70%;
   padding: 10px 14px;
@@ -207,82 +178,49 @@ html, body, #root {
   background: var(--card-2);
   color: var(--text);
   box-shadow: 0 4px 16px rgba(0,0,0,.18);
-  position: relative;
 }
-
+.msg .username { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
 .msg.me {
   margin-left: auto;
   background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 100%);
   color: #fff;
 }
 
-/* Optional header in bubble: username • time (if you render it) */
-.msg .username {
-  font-size: 12px;
-  color: var(--muted);
-  margin-bottom: 4px;
-}
-
 /* Typing indicator */
-.typing-indicator {
-  color: var(--muted);
-  font-size: 13px;
-  padding: 0 16px 8px;
-}
+.typing { color: var(--muted); font-size: 13px; padding: 0 16px 8px; }
 
-/* Footer / input */
+/* Footer / MessageInput */
 .footer {
   border-top: 1px solid var(--border);
   background: #0e1014;
   padding: 12px;
 }
+.footer .row { display: flex; gap: 8px; }
+.footer .input { flex: 1; }
 
-.footer .input-row {
-  display: flex;
-  gap: 8px;
-}
-
-.footer input[type="text"],
-.footer input[type="search"],
-.footer input[type="email"],
-.footer input[type="password"],
-.footer textarea {
-  flex: 1;
-  height: 44px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: #0b0d12;
-  color: var(--text);
-  padding: 0 12px;
-  outline: none;
-}
-
-.footer button {
-  height: 44px;
-  border-radius: 12px;
-  border: none;
-  padding: 0 16px;
-  background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 100%);
-  color: #fff;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-/* Online users list (if your component outputs a <ul>) */
-.online-users {
+/* Online users */
+.online-list {
   list-style: none;
-  padding: 0;
   margin: 0;
+  padding: 0;
 }
-.online-users li {
+.online-list li {
   display: flex;
   align-items: center;
   gap: 8px;
   color: var(--text);
 }
-.online-users .dot {
-  width: 8px;
-  height: 8px;
-  background: #22c55e;
-  border-radius: 999px;
+
+/* =========================
+   Responsive
+========================= */
+@media (max-width: 900px) {
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: 220px 1fr;
+  }
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
 }
