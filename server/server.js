@@ -9,46 +9,47 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import rateLimit from 'express-rate-limit';
 
-/* ------------------------- ENV & CONSTANTS ------------------------- */
+/* ------------------------- ENV ------------------------- */
 const {
   PORT = 5000,
   MONGODB_URI = 'mongodb://127.0.0.1:27017/realtime_chat',
+  // Comma-separated origins, e.g. "http://localhost:3000,https://your-netlify.app"
   CLIENT_ORIGIN = 'http://localhost:3000',
-  JWT_SECRET = 'dev_secret_change_me'
+  JWT_SECRET = 'change_me'
 } = process.env;
 
-/* ----------------------------- DB INIT ---------------------------- */
+const allowedOrigins = CLIENT_ORIGIN.split(',').map(s => s.trim()).filter(Boolean);
+
+/* ------------------------- DB -------------------------- */
 mongoose.set('strictQuery', true);
 await mongoose.connect(MONGODB_URI, { maxPoolSize: 10 });
 console.log('✅ MongoDB connected');
 
-/* ----------------------------- MODELS ----------------------------- */
+/* ----------------------- MODELS ------------------------ */
 const { Schema, model } = mongoose;
 
-// Users
 const userSchema = new Schema(
   {
     username: { type: String, unique: true, required: true, trim: true, minlength: 3, maxlength: 24 },
     email:    { type: String, unique: true, sparse: true, trim: true },
-    password: { type: String, required: true }, // bcrypt hash
+    password: { type: String, required: true } // bcrypt hash
   },
   { timestamps: true }
 );
 const User = model('User', userSchema);
 
-// Messages
 const messageSchema = new Schema(
   {
     room: { type: String, index: true, required: true },
-    username: { type: String, required: true },   // denormalized username
-    text: { type: String, required: true },
+    username: { type: String, required: true }, // denormalized username
+    text: { type: String, required: true }
   },
   { timestamps: { createdAt: true, updatedAt: false } }
 );
 messageSchema.index({ room: 1, createdAt: -1 });
 const Message = model('Message', messageSchema);
 
-/* --------------------------- AUTH HELPERS ------------------------- */
+/* -------------------- AUTH HELPERS --------------------- */
 function signToken(payload, expiresIn = '7d') {
   return jwt.sign(payload, JWT_SECRET, { expiresIn });
 }
@@ -67,23 +68,28 @@ function requireAuth(req, res, next) {
   }
 }
 
-/* ----------------------------- APP SETUP -------------------------- */
+/* ---------------------- APP SETUP ---------------------- */
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: CLIENT_ORIGIN, methods: ['GET', 'POST'] }
-});
 
-app.use(cors({ origin: CLIENT_ORIGIN }));
+// CORS: allow multiple origins (localhost + deployed client)
+app.use(
+  cors({
+    origin(origin, cb) {
+      if (!origin) return cb(null, true);              // allow curl/postman
+      if (allowedOrigins.includes(origin)) return cb(null, true);
+      return cb(new Error('CORS blocked for ' + origin));
+    },
+    credentials: true
+  })
+);
 app.use(express.json());
 
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });
 
-/* ----------------------------- ROUTES ----------------------------- */
-// Health
+/* ----------------------- ROUTES ------------------------ */
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
-// Register
 app.post('/auth/register', authLimiter, async (req, res) => {
   try {
     const { username, password, email } = req.body || {};
@@ -105,7 +111,6 @@ app.post('/auth/register', authLimiter, async (req, res) => {
   }
 });
 
-// Login
 app.post('/auth/login', authLimiter, async (req, res) => {
   try {
     const { username, password } = req.body || {};
@@ -125,12 +130,11 @@ app.post('/auth/login', authLimiter, async (req, res) => {
   }
 });
 
-// Me
 app.get('/auth/me', requireAuth, (req, res) => {
-  res.json({ user: req.user }); // { id, username }
+  res.json({ user: req.user });
 });
 
-// Chat history (protected)
+// Protected REST history (optional; socket also sends history)
 app.get('/rooms/:room/messages', requireAuth, async (req, res) => {
   const { room } = req.params;
   const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
@@ -138,8 +142,14 @@ app.get('/rooms/:room/messages', requireAuth, async (req, res) => {
   res.json(docs.reverse());
 });
 
-/* ------------------------- SOCKET.IO AUTH ------------------------- */
-// Expect client to connect with: io(URL, { auth: { token } })
+/* --------------------- SOCKET.IO SETUP ----------------- */
+const io = new Server(server, {
+  cors: {
+    origin: allowedOrigins
+  }
+});
+
+// Verify JWT on socket handshake
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
   if (!token) return next(new Error('Missing auth token'));
@@ -152,18 +162,18 @@ io.use((socket, next) => {
   }
 });
 
-/* --------------------------- SOCKET HANDLERS ---------------------- */
+// Track online users by room
 const roomUsers = new Map(); // room -> Set(usernames)
 const getOnline = (room) => Array.from(roomUsers.get(room) || []);
 
 io.on('connection', (socket) => {
-  console.log('🔌 Socket connected:', socket.id, 'user:', socket.data.user?.username);
+  console.log('🔌 socket connected:', socket.id, 'user:', socket.data.user?.username);
 
   socket.on('joinRoom', async ({ room }) => {
     const username = socket.data.user?.username;
     if (!room || !username) return;
 
-    // Leave previous room if any
+    // Leave previous
     if (socket.data.room) {
       const prev = socket.data.room;
       socket.leave(prev);
@@ -175,15 +185,14 @@ io.on('connection', (socket) => {
       io.to(prev).emit('onlineUsers', getOnline(prev));
     }
 
-    // Join new room
+    // Join new
     socket.data.room = room;
     socket.join(room);
-
     if (!roomUsers.has(room)) roomUsers.set(room, new Set());
     roomUsers.get(room).add(username);
     io.to(room).emit('onlineUsers', getOnline(room));
 
-    // Send history (last 50) only to the joining user
+    // Send last 50 to joining user
     const history = await Message.find({ room }).sort({ createdAt: -1 }).limit(50).lean();
     socket.emit('chatHistory', history.reverse());
   });
@@ -201,7 +210,7 @@ io.on('connection', (socket) => {
       room: doc.room,
       username: doc.username,
       text: doc.text,
-      createdAt: doc.createdAt,
+      createdAt: doc.createdAt
     });
   });
 
@@ -223,11 +232,11 @@ io.on('connection', (socket) => {
       }
       io.to(room).emit('onlineUsers', getOnline(room));
     }
-    console.log('❌ Socket disconnected:', socket.id);
+    console.log('❌ socket disconnected:', socket.id);
   });
 });
 
-/* ------------------------------ START ---------------------------- */
+/* ----------------------- START ------------------------ */
 server.listen(PORT, () => {
   console.log(`🚀 Server listening on :${PORT}`);
 });
