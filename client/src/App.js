@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { socket, connectWithToken } from "./socket";
 import ChatRoom from "./components/ChatRoom";
-import LoginForm from "./components/LoginForm";
+import LoginForm from "./components/Login";
 import "./App.css";
 
 export default function App() {
