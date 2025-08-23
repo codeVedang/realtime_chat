@@ -67,6 +67,43 @@ input[type="text"]:focus, input[type="password"]:focus {
 /* =========================
    AUTH (Login/Register)
 ========================= */
+.auth-wrapper {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(1200px 600px at 20% -10%, #1e2637 0%, transparent 60%),
+              radial-gradient(1000px 500px at 120% 110%, #1c2333 0%, transparent 50%),
+              var(--bg);
+  padding: 24px;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 440px;
+  background: linear-gradient(180deg, var(--card) 0%, var(--card-2) 100%);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 24px;
+  color: var(--text);
+  box-shadow: 0 20px 60px rgba(0,0,0,.35);
+}
+
+.auth-header h1 { margin: 0 0 6px 0; font-size: 24px; font-weight: 700; }
+.auth-header .muted { color: var(--muted); font-size: 14px; margin: 0 0 18px 0; }
+
+.auth-form { display: grid; gap: 14px; }
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-field label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
 /* ---------- AUTH FORM INPUTS ---------- */
 .auth-input {
   width: 100%;
@@ -113,10 +150,17 @@ input[type="text"]:focus, input[type="password"]:focus {
   cursor: not-allowed;
 }
 
+.auth-error {
+  color: var(--error);
+  background: rgba(255, 107, 107, .12);
+  border: 1px solid rgba(255, 107, 107, .3);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 14px;
+}
 
 /* =========================
    CHAT LAYOUT
-   (Matches your current classes)
 ========================= */
 
 /* App container that wraps <ChatRoom /> */
@@ -127,7 +171,7 @@ input[type="text"]:focus, input[type="password"]:focus {
   background: var(--bg);
 }
 
-/* ---- Sidebar (also reused by JoinForm/LoginForm containers) ---- */
+/* ---- Sidebar ---- */
 .sidebar {
   background: var(--card);
   border-right: 1px solid var(--border);
@@ -183,7 +227,7 @@ input[type="text"]:focus, input[type="password"]:focus {
   gap: 12px;
 }
 
-/* Message bubble (MessageList uses .msg and .me) */
+/* Message bubble */
 .msg {
   max-width: 70%;
   padding: 10px 14px;
