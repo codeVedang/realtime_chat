@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { socket, connectWithToken } from "./socket";
 import ChatRoom from "./components/ChatRoom";
 import { loginUser, registerUser } from "./api"; // <-- make sure api.js exists
-import "./styles.css"; // or "./App.css" depending on where your CSS is
+import "./App.css"; // or "./App.css" depending on where your CSS is
 
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem("token") || "");
