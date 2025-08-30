@@ -12,52 +12,68 @@ export default function ChatRoom({ username, room, token, onSwitchRoom }) {
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [typingUsers, setTypingUsers] = useState(new Set());
 
-  // Fetch rooms + update when server broadcasts new ones
+  /* ----------------- Rooms ----------------- */
   useEffect(() => {
     fetch(`${process.env.REACT_APP_SERVER_URL}/rooms`)
-      .then(r => r.json())
-      .then(setRooms);
+      .then((r) => r.json())
+      .then(setRooms)
+      .catch((err) => console.error("Rooms fetch error:", err));
 
     socket.on("roomsUpdated", setRooms);
     return () => socket.off("roomsUpdated", setRooms);
   }, []);
 
-  // Socket listeners for chat, online users, typing
+  /* ----------------- Socket listeners ----------------- */
   useEffect(() => {
-    socket.on("chatHistory", setMessages);
-    socket.on("chatMessage", (msg) => setMessages(prev => [...prev, msg]));
-    socket.on("onlineUsers", setOnlineUsers);
-    socket.on("typing", ({ username: u, isTyping }) => {
-      setTypingUsers(prev => {
+    function onChatHistory(history) {
+      setMessages(Array.isArray(history) ? history : []);
+    }
+    function onChatMessage(msg) {
+      if (!msg || !msg.text || !msg.username) return;
+      setMessages((prev) => [...prev, msg]);
+    }
+    function onOnlineUsers(list) {
+      setOnlineUsers(Array.isArray(list) ? list : []);
+    }
+    function onTyping({ username: u, isTyping }) {
+      setTypingUsers((prev) => {
         const next = new Set(prev);
         if (isTyping) next.add(u);
         else next.delete(u);
         return next;
       });
-    });
+    }
+
+    socket.on("chatHistory", onChatHistory);
+    socket.on("chatMessage", onChatMessage);
+    socket.on("onlineUsers", onOnlineUsers);
+    socket.on("typing", onTyping);
 
     return () => {
-      socket.off("chatHistory");
-      socket.off("chatMessage");
-      socket.off("onlineUsers");
-      socket.off("typing");
+      socket.off("chatHistory", onChatHistory);
+      socket.off("chatMessage", onChatMessage);
+      socket.off("onlineUsers", onOnlineUsers);
+      socket.off("typing", onTyping);
     };
   }, []);
 
-  // Typing text display
+  /* ----------------- Typing indicator text ----------------- */
   const typingText = useMemo(() => {
-    const arr = Array.from(typingUsers).filter(u => u !== username);
+    const arr = Array.from(typingUsers).filter((u) => u !== username);
     if (!arr.length) return "";
     if (arr.length === 1) return `${arr[0]} is typing...`;
-    return `${arr.slice(0, 2).join(", ")}${arr.length > 2 ? " +" + (arr.length - 2) : ""} are typing...`;
+    return `${arr.slice(0, 2).join(", ")}${
+      arr.length > 2 ? " +" + (arr.length - 2) : ""
+    } are typing...`;
   }, [typingUsers, username]);
 
+  /* ----------------- Render ----------------- */
   return (
     <>
       <div className="sidebar">
         <h3>Rooms</h3>
         <div className="rooms">
-          {rooms.map(r => (
+          {rooms.map((r) => (
             <button
               key={r}
               className={`room-btn ${r === room ? "active" : ""}`}
@@ -72,7 +88,7 @@ export default function ChatRoom({ username, room, token, onSwitchRoom }) {
           <input
             placeholder="New room name"
             value={newRoom}
-            onChange={e => setNewRoom(e.target.value)}
+            onChange={(e) => setNewRoom(e.target.value)}
             className="input"
           />
           <button
@@ -82,7 +98,7 @@ export default function ChatRoom({ username, room, token, onSwitchRoom }) {
               await fetch(`${process.env.REACT_APP_SERVER_URL}/rooms`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ name: newRoom })
+                body: JSON.stringify({ name: newRoom }),
               });
               setNewRoom("");
             }}
@@ -105,8 +121,12 @@ export default function ChatRoom({ username, room, token, onSwitchRoom }) {
         <TypingIndicator text={typingText} />
         <div className="footer">
           <MessageInput
-            onTyping={(is) => socket.emit("typing", { room, username, isTyping: is })}
-            onSend={(text) => socket.emit("chatMessage", { room, username, text })}
+            onTyping={(is) =>
+              socket.emit("typing", { room, username, isTyping: is })
+            }
+            onSend={(text) =>
+              socket.emit("chatMessage", { room, username, text })
+            }
           />
         </div>
       </div>

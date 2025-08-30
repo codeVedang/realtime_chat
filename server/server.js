@@ -1,44 +1,164 @@
+// server/server.js
+import "dotenv/config";
 import express from "express";
 import http from "http";
 import { Server } from "socket.io";
 import mongoose from "mongoose";
 import cors from "cors";
-import dotenv from "dotenv";
 
-dotenv.config();
+// use your helpers from auth.js
+import {
+  hashPassword,
+  verifyPassword,
+  signToken,
+  requireAuth,
+} from "./auth.js";
 
 const {
   PORT = 5000,
   MONGODB_URI,
-  CLIENT_ORIGIN = "http://localhost:3000",
+  JWT_SECRET = "change_me", // used by auth.js too
 } = process.env;
+
+if (!MONGODB_URI) {
+  console.error("Missing MONGODB_URI in env");
+  process.exit(1);
+}
 
 const app = express();
 const server = http.createServer(app);
 
-app.use(cors({
-  origin: true,
-  credentials: true,
-  methods: ["GET","POST"],
-  allowedHeaders: ["Content-Type","Authorization"]
-}));
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 app.use(express.json());
 
-// ✅ MongoDB (optional, if you use Atlas)
-mongoose.connect(MONGODB_URI, { maxPoolSize: 10 })
+/* ------------------------ MongoDB connect ----------------------- */
+mongoose.set("strictQuery", true);
+mongoose
+  .connect(MONGODB_URI, { maxPoolSize: 10 })
   .then(() => console.log("✅ MongoDB connected"))
-  .catch(err => console.error("❌ MongoDB error:", err));
+  .catch((err) => {
+    console.error("❌ MongoDB connection error:", err);
+    process.exit(1);
+  });
 
-// -----------------------------
-// In-memory storage (same as before, now supports dynamic rooms)
-// -----------------------------
+/* ---------------------------- Models ---------------------------- */
+const { Schema, model } = mongoose;
+
+const userSchema = new Schema(
+  {
+    username: {
+      type: String,
+      unique: true,
+      required: true,
+      trim: true,
+      minlength: 3,
+      maxlength: 24,
+    },
+    email: { type: String, unique: true, sparse: true, trim: true },
+    password: { type: String, required: true }, // bcrypt hash
+  },
+  { timestamps: true }
+);
+const User = model("User", userSchema);
+
+const messageSchema = new Schema(
+  {
+    room: { type: String, index: true, required: true },
+    username: { type: String, required: true },
+    text: { type: String, required: true },
+  },
+  { timestamps: { createdAt: true, updatedAt: false } }
+);
+messageSchema.index({ room: 1, createdAt: -1 });
+const Message = model("Message", messageSchema);
+
+/* ---------------------------- Routes ---------------------------- */
+app.get("/health", (_req, res) => res.json({ ok: true }));
+
+// Register
+app.post("/auth/register", async (req, res) => {
+  try {
+    const { username, password, email } = req.body || {};
+    if (!username || !password)
+      return res.status(400).json({ error: "Username and password required" });
+
+    const exists = await User.findOne({ username });
+    if (exists) return res.status(409).json({ error: "Username already taken" });
+
+    const hashed = await hashPassword(password);
+    const user = await User.create({ username, email, password: hashed });
+
+    const token = signToken({ id: user._id, username: user.username });
+    res.json({
+      token,
+      user: { id: user._id, username: user.username, email: user.email },
+    });
+  } catch (e) {
+    console.error("Register error:", e);
+    res.status(500).json({ error: "Registration failed" });
+  }
+});
+
+// Login
+app.post("/auth/login", async (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    if (!username || !password)
+      return res.status(400).json({ error: "Username and password required" });
+
+    const user = await User.findOne({ username });
+    if (!user) return res.status(401).json({ error: "Invalid credentials" });
+
+    const ok = await verifyPassword(password, user.password);
+    if (!ok) return res.status(401).json({ error: "Invalid credentials" });
+
+    const token = signToken({ id: user._id, username: user.username });
+    res.json({
+      token,
+      user: { id: user._id, username: user.username, email: user.email },
+    });
+  } catch (e) {
+    console.error("Login error:", e);
+    res.status(500).json({ error: "Login failed" });
+  }
+});
+
+// Guest login
+app.post("/auth/guest", async (req, res) => {
+  try {
+    const username = (req.body?.username || "").trim();
+    if (!username || username.length < 3)
+      return res.status(400).json({ error: "username required" });
+    const token = signToken({ id: `guest:${username}`, username }, "7d");
+    res.json({ token, user: { id: `guest:${username}`, username } });
+  } catch (e) {
+    console.error("Guest error:", e);
+    res.status(500).json({ error: "guest failed" });
+  }
+});
+
+// Get room history (REST)
+app.get("/rooms/:room/messages", requireAuth, async (req, res) => {
+  const { room } = req.params;
+  const limit = Math.min(parseInt(req.query.limit || "50", 10), 200);
+  const docs = await Message.find({ room })
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .lean();
+  res.json(docs.reverse());
+});
+
+/* ----------------------- Dynamic Rooms -------------------------- */
 let rooms = ["general", "random", "tech", "music"];
-let messages = { general: [], random: [], tech: [], music: [] };
-let onlineUsers = {}; // { room: [usernames] }
+let onlineUsers = {}; // { room: [username] }
 
-// -----------------------------
-// REST API for creating new rooms
-// -----------------------------
 app.get("/rooms", (req, res) => {
   res.json(rooms);
 });
@@ -46,49 +166,53 @@ app.get("/rooms", (req, res) => {
 app.post("/rooms", (req, res) => {
   const { name } = req.body;
   if (!name) return res.status(400).json({ error: "Room name required" });
-  if (rooms.includes(name)) return res.status(400).json({ error: "Room already exists" });
+  if (rooms.includes(name))
+    return res.status(400).json({ error: "Room already exists" });
 
   rooms.push(name);
-  messages[name] = [];
   onlineUsers[name] = [];
-  io.emit("roomsUpdated", rooms); // 🔥 notify clients
+  io.emit("roomsUpdated", rooms);
   res.json({ success: true, rooms });
 });
 
-// -----------------------------
-// Socket.io
-// -----------------------------
+/* --------------------------- Socket.io -------------------------- */
 const io = new Server(server, {
-  cors: { origin: true, credentials: true, methods: ["GET","POST"] }
+  cors: { origin: true, credentials: true, methods: ["GET", "POST"] },
 });
 
 io.on("connection", (socket) => {
   console.log("⚡ Client connected:", socket.id);
 
-  // Join room
-  socket.on("joinRoom", ({ room, username }) => {
+  // Join Room
+  socket.on("joinRoom", async ({ room, username }) => {
     socket.join(room);
     socket.username = username;
     socket.room = room;
 
-    // send last 50 messages of that room
-    if (!messages[room]) messages[room] = [];
-    socket.emit("chatHistory", messages[room].slice(-50));
+    // Load last 50 msgs from DB
+    const history = await Message.find({ room })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
+    socket.emit("chatHistory", history.reverse());
 
-    // add to online users
+    // Add to online users
     if (!onlineUsers[room]) onlineUsers[room] = [];
-    if (!onlineUsers[room].includes(username)) {
+    if (!onlineUsers[room].includes(username))
       onlineUsers[room].push(username);
-    }
+
     io.to(room).emit("onlineUsers", onlineUsers[room]);
   });
 
-  // Chat messages
-  socket.on("chatMessage", ({ room, username, text }) => {
+  // Chat Message
+  socket.on("chatMessage", async ({ room, username, text }) => {
     if (!room || !username || !text) return;
-    const msg = { username, text, createdAt: new Date() };
-    messages[room].push(msg);
-    io.to(room).emit("chatMessage", msg);
+    const msg = await Message.create({ room, username, text });
+    io.to(room).emit("chatMessage", {
+      username,
+      text,
+      createdAt: msg.createdAt,
+    });
   });
 
   // Typing indicator
@@ -100,14 +224,14 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     const { room, username } = socket;
     if (room && onlineUsers[room]) {
-      onlineUsers[room] = onlineUsers[room].filter(u => u !== username);
+      onlineUsers[room] = onlineUsers[room].filter((u) => u !== username);
       io.to(room).emit("onlineUsers", onlineUsers[room]);
     }
     console.log("❌ Client disconnected:", socket.id);
   });
 });
 
-app.get("/", (req, res) => {
+app.get("/", (_req, res) => {
   res.send("✅ Realtime Chat Server running!");
 });
 
