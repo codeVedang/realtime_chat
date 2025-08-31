@@ -41,3 +41,24 @@ client/build/
 
 # For Server
 server/node_modules/
+
+# For Mobile (React Native)
+mobile/node_modules/
+mobile/android/.gradle/
+mobile/android/app/build/
+mobile/ios/Pods/
+*.apk
+
+# Client
+client/node_modules/
+client/build/
+
+# Server
+server/node_modules/
+
+# Mobile (React Native)
+mobile/node_modules/
+mobile/android/.gradle/
+mobile/android/app/build/
+mobile/ios/Pods/
+*.apk
